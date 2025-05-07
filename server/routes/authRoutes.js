@@ -1,79 +1,78 @@
-import express from "express"
-import passport from "passport"
-import axios from "axios"
-import User from "../models/userModel.js"
-import generateToken from "../utils/generateToken.js"
-import dotenv from "dotenv"
-dotenv.config()
+import express from "express";
+import passport from "passport";
+import axios from "axios";
+import User from "../models/userModel.js";
+import generateToken from "../utils/generateToken.js";
+import dotenv from "dotenv";
+dotenv.config();
 
-const router = express.Router()
+const router = express.Router();
 
-//authenticate the user using google
+// Handle callback from Google after authentication
 router.get(
   "/google/callback",
   passport.authenticate("google", {
     successRedirect: process.env.CLIENT_URL,
     failureRedirect: `${process.env.CLIENT_URL}/login/failed`,
   })
-)
+);
 
-//forward the request to goggle's authentication server
-router.get("/google", async (req, res) => {
-  try {
-    const response = await axios.get(
-      "https://accounts.google.com/o/oauth2/v2/auth",
-      {
-        params: req.query,
-      }
-    )
-    res.send(response)
-  } catch (error) {
-    console.log(error)
-    res.status(500).json({ error: "Internal Server Error" })
-  }
-})
+// Initiate Google authentication
+router.get(
+  "/google",
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+  })
+);
 
-//register or login user to DB
+// Register or login user
 router.get("/login/success", async (req, res) => {
-  if (req.user) {
-    const userExists = await User.findOne({ email: req.user._json.email })
-    if (userExists) {
-      generateToken(res, userExists._id)
-    } else {
+  if (!req.user) {
+    return res.status(403).json({ message: "Not Authorized" });
+  }
+
+  try {
+    let user = await User.findOne({ email: req.user._json.email });
+
+    if (!user) {
       const newUser = new User({
         name: req.user._json.name,
         email: req.user._json.email,
-        password: Date.now(), //dummy password
-      })
-      generateToken(res, newUser._id)
-      await newUser.save()
+        password: Date.now(), // dummy password
+      });
+      user = await newUser.save();
     }
+
+    generateToken(res, user._id);
+
     res.status(200).json({
-      user: { ...req.user, isAdmin: userExists.isAdmin },
-      message: "Succesfully logged in",
-      _id: userExists._id,
-    })
-  } else {
-    res.status(403).json({
-      message: "Not Authorized",
-    })
+      message: "Successfully logged in",
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Login error" });
   }
-})
+});
 
-//login failed
+// Login failed
 router.get("/login/failed", (req, res) => {
-  res.status(401)
-  throw new Error("Login Failed")
-})
+  res.status(401).json({ error: "Login Failed" });
+});
 
-//logout
+// Logout
 router.get("/logout", (req, res) => {
   req.logout(err => {
     if (err) {
-      console.log(err)
+      console.error("Logout error:", err);
+      return res.status(500).json({ message: "Logout Failed" });
     }
-    res.redirect("/")
-  })
-})
+    res.redirect(process.env.CLIENT_URL);
+  });
+});
 
-export default router
+export default router;
